@@ -102,12 +102,14 @@ def parse_srt_entries(content):
         # Lines 3+: subtitle text (may be multi-line)
         text = "\n".join(lines[2:])
 
-        entries.append({
-            "index": index,
-            "start": start,
-            "end": end,
-            "text": text,
-        })
+        entries.append(
+            {
+                "index": index,
+                "start": start,
+                "end": end,
+                "text": text,
+            }
+        )
 
     return entries
 
@@ -120,7 +122,9 @@ def build_srt_from_entries(entries):
     """
     blocks = []
     for entry in entries:
-        block = f"{entry['index']}\n{entry['start']} --> {entry['end']}\n{entry['text']}"
+        block = (
+            f"{entry['index']}\n{entry['start']} --> {entry['end']}\n{entry['text']}"
+        )
         blocks.append(block)
     return "\n\n".join(blocks) + "\n"
 
@@ -201,7 +205,9 @@ def translate_batch(client, batch, filename, batch_num, total_batches):
                 raise
 
         except Exception as e:
-            print(f"\n  Error translating {filename} batch {batch_num}/{total_batches}: {e}")
+            print(
+                f"\n  Error translating {filename} batch {batch_num}/{total_batches}: {e}"
+            )
             if attempt < MAX_RETRIES - 1:
                 print(f"  Retrying in {RETRY_DELAY}s... ({attempt + 1}/{MAX_RETRIES})")
                 time.sleep(RETRY_DELAY)
@@ -211,7 +217,7 @@ def translate_batch(client, batch, filename, batch_num, total_batches):
     return None
 
 
-def process_srt_file(client, input_path, output_path):
+def process_srt_file(client, index, pbar, weight, input_path, output_path):
     """Process a single SRT file using batched text-only translation."""
     filename = input_path.name
 
@@ -225,25 +231,20 @@ def process_srt_file(client, input_path, output_path):
             print(f"\n  Failed: Could not parse any subtitle entries from {filename}")
             return False
 
-        print(f"\n  Translating: {filename}")
-        print(f"  Entries: {len(entries)}, Characters: {len(content):,}")
-
+    
         # Split entries into batches
         batches = [
             entries[i : i + BATCH_SIZE] for i in range(0, len(entries), BATCH_SIZE)
         ]
         total_batches = len(batches)
-        print(f"  Batches: {total_batches} (batch size: {BATCH_SIZE})")
 
+        batch_weight = weight / total_batches
         # Translate each batch
         translated_entries = []
         for batch_num, batch in enumerate(batches, 1):
-            print(
-                f"  Batch {batch_num}/{total_batches} "
-                f"(entries {batch[0]['index']}-{batch[-1]['index']})...",
-                end=" ",
-                flush=True,
-            )
+            # update progress bar by the portion this batch contributes
+            pbar.update(batch_weight)
+            pbar.set_description(f"#{index+1}: batch -> {batch_num}/{total_batches}")
 
             result = translate_batch(client, batch, filename, batch_num, total_batches)
 
@@ -254,14 +255,14 @@ def process_srt_file(client, input_path, output_path):
             # Build translated entries: keep original timestamps, use translated text
             translated_map = {item["index"]: item["text"] for item in result}
             for entry in batch:
-                translated_entries.append({
-                    "index": entry["index"],
-                    "start": entry["start"],
-                    "end": entry["end"],
-                    "text": translated_map.get(entry["index"], entry["text"]),
-                })
-
-            print("done")
+                translated_entries.append(
+                    {
+                        "index": entry["index"],
+                        "start": entry["start"],
+                        "end": entry["end"],
+                        "text": translated_map.get(entry["index"], entry["text"]),
+                    }
+                )
 
             # Rate limit delay between batches (skip after the last one)
             if batch_num < total_batches:
@@ -272,7 +273,6 @@ def process_srt_file(client, input_path, output_path):
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(translated_srt)
 
-        print(f"  Saved to: {output_path}")
         return True
 
     except Exception as e:
@@ -319,17 +319,24 @@ def main():
     # Process files
     successful = 0
     failed = 0
-
-    for srt_file in tqdm(srt_files, desc="Processing"):
+    pbar = tqdm(total=100)
+    each_file_weight = 100 / len(srt_files)
+    # ensure we close the progress bar when done
+    for index, srt_file in enumerate(srt_files):
+        # show which file is being processed
+        pbar.set_description(f"Translating file #{index + 1}")
         output_filename = srt_file.stem + "_DE.srt"
         output_path = Path(OUTPUT_FOLDER) / output_filename
-
-        if process_srt_file(client, srt_file, output_path):
+        if process_srt_file(
+            client, index, pbar, each_file_weight, srt_file, output_path
+        ):
             successful += 1
         else:
             failed += 1
 
         time.sleep(1)
+
+    pbar.close()
 
     # Summary
     print("\n" + "=" * 50)
