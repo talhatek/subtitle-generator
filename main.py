@@ -28,7 +28,7 @@ OUTPUT_FOLDER = "output"
 MODEL = "openai/gpt-oss-120b"
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
-BATCH_SIZE = 30  # Number of subtitle entries per API call (tune based on TPM limit)
+BATCH_SIZE = 40  # Number of subtitle entries per API call (tune based on TPM limit)
 
 # System prompt - optimized for text-only JSON translation
 SYSTEM_PROMPT = """You are a professional subtitle translator.
@@ -243,7 +243,7 @@ def process_srt_file(client, index, pbar, weight, input_path, output_path):
         translated_entries = []
         for batch_num, batch in enumerate(batches, 1):
             # update progress bar by the portion this batch contributes
-            pbar.update(batch_weight)
+            
             pbar.set_description(f"#{index+1}: batch -> {batch_num}/{total_batches}")
 
             result = translate_batch(client, batch, filename, batch_num, total_batches)
@@ -263,7 +263,7 @@ def process_srt_file(client, index, pbar, weight, input_path, output_path):
                         "text": translated_map.get(entry["index"], entry["text"]),
                     }
                 )
-
+            pbar.update(batch_weight)
             # Rate limit delay between batches (skip after the last one)
             if batch_num < total_batches:
                 time.sleep(2)
